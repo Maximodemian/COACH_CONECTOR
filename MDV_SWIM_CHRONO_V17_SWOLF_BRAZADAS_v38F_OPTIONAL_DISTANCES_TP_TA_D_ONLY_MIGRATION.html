@@ -5093,7 +5093,7 @@ modal.style.display = "block";
 function escHtml_(v){
     const s = String(v ?? "");
     try{
-      if (typeof window.escapeHtml_ === "function") return window.escHtml_(s);
+      if (typeof window.escapeHtml_ === "function") return window.escapeHtml_(s);
     }catch(e){}
     return s.replace(/[&<>"'`]/g, ch => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;'
