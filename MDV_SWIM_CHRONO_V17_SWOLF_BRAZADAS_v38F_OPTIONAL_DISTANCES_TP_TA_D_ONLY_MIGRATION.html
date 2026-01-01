@@ -3709,6 +3709,13 @@ function showResults(showTables = true, showCharts = true) {
   try {
     if (typeof recalcAllAccOverridesFromSplits_ === 'function') recalcAllAccOverridesFromSplits_();
   } catch (e) { console.error(e); }
+  try {
+    const pending = (typeof getPendingUndefMap_ === 'function') ? getPendingUndefMap_() : [];
+    if (pending.length && !window.__optionalDistanceDecisionResolved) {
+      showTables = false;
+      showCharts = false;
+    }
+  } catch (e) { console.error(e); }
   exportCsvBtn.disabled = false;
   exportPdfBtn.disabled = false;
   // SWOLF (si corresponde)
@@ -6335,7 +6342,9 @@ function escHtml_(v){
 
     const buttons = (config.partials || []).map((p, j) => {
       const lbl = getPartialLabel_(j);
-      const txt = (p != null && Number.isFinite(Number(p))) ? `${Number(p)} ${unit}` : `${escHtml_(lbl)}`;
+      const txt = (p != null && Number.isFinite(Number(p)))
+        ? `${Number(p)} ${unit}`
+        : `<div style="font-weight:700;">TP:</div><div>TA:</div>`;
       return `<td><button data-i='${i}' data-j='${j}' class="btn-parcial">${txt}</button></td>`;
     }).join('');
 
@@ -9145,7 +9154,9 @@ function escHtml_(v){
     tr.id = `row${i}`;
 
     const buttons = (config.partials || []).map((p, j) => {
-      const label = (p == null || String(p).trim() === '') ? `P${j+1}` : `${p} ${unit}`;
+      const label = (p == null || String(p).trim() === '')
+        ? `<div style="font-weight:700;">TP:</div><div>TA:</div>`
+        : `${p} ${unit}`;
       return `<td><button data-i='${i}' data-j='${j}' class="btn-parcial">${label}</button></td>`;
     }).join('');
 
@@ -9213,16 +9224,19 @@ function escHtml_(v){
     const afterStrokes = () => {
       const pending = (typeof window.getPendingUndefMap_ === 'function') ? window.getPendingUndefMap_() : [];
       const proceed = () => {
+        window.__optionalDistanceDecisionResolved = true;
         try { if (typeof recalcAllAccOverridesFromSplits_ === 'function') { /* already */ } }catch(e){}
         try { saveExecutedSessionToLocal_ && saveExecutedSessionToLocal_(null); } catch(e){ console.error('autosave results error', e); }
         if (window.onSeriesAllFinished_) window.onSeriesAllFinished_();
         else if (typeof showFinalModal === 'function') showFinalModal();
       };
       if (pending && pending.length){
+        window.__optionalDistanceDecisionResolved = false;
         if (typeof openOptionalDistanceFlow_ === 'function') openOptionalDistanceFlow_(pending, proceed);
         else if (typeof openUndefEditor_ === 'function') openUndefEditor_(pending, proceed);
         else proceed();
       } else {
+        window.__optionalDistanceDecisionResolved = true;
         proceed();
       }
     };
