@@ -3706,6 +3706,9 @@ if (closeSwolfInfoBtn) closeSwolfInfoBtn.addEventListener('click', () => { if (s
 if (okSwolfInfoBtn) okSwolfInfoBtn.addEventListener('click', () => { if (swolfInfoOverlay) swolfInfoOverlay.style.display='none'; if (swolfInfoModal) swolfInfoModal.style.display='none'; });
 
 function showResults(showTables = true, showCharts = true) {
+  try {
+    if (typeof recalcAllAccOverridesFromSplits_ === 'function') recalcAllAccOverridesFromSplits_();
+  } catch (e) { console.error(e); }
   exportCsvBtn.disabled = false;
   exportPdfBtn.disabled = false;
   // SWOLF (si corresponde)
@@ -6035,7 +6038,7 @@ function escHtml_(v){
         <label>Resumen de nadadores</label>
         <div id="migSwimmerList" style="border:1px solid #e5e7eb; border-radius:10px; padding:10px; max-height:260px; overflow:auto;"></div>
         <small style="display:block; margin-top:6px; color:#6b7280;">
-          Tocá el <b>nombre</b> para editar tiempos, brazadas y <b>SWOLF</b> <button class="info-btn" data-info="swolf" title="¿Qué es SWOLF?">i</button>.<br>Los nadadores vinculados (con <b>swimmer_id</b>) migran directo a Marks. Los no vinculados se guardan igual en Chrono Imports como referencia.
+          Tocá el <b>nombre</b> para editar distancias parciales, brazadas y <b>SWOLF</b> <button class="info-btn" data-info="swolf" title="¿Qué es SWOLF?">i</button>.<br>Los nadadores vinculados (con <b>swimmer_id</b>) migran directo a Marks. Los no vinculados se guardan igual en Chrono Imports como referencia.
         </small>
       </div>
 
@@ -6745,22 +6748,57 @@ function escHtml_(v){
     const n = (config.partials || []).length;
     const segCount = n + 1;
     const unit = (typeof distUnitShort_ === 'function') ? distUnitShort_() : '';
+    const totalUnits = Number(config.total || 0);
 
-    // decidir eje X
-    const allCfgKnown = (config.partials || []).every(p => (p!=null && Number.isFinite(Number(p))));
-    const useDistanceX = allCfgKnown; // si config completa, usamos distancia
+    // decidir eje X (si hay total, usar distancia)
+    const useDistanceX = Number.isFinite(totalUnits) && totalUnits > 0;
+
+    // detectar segmentos con distancia conocida (config o overrides por nadador)
+    const segHasDist = new Array(segCount).fill(false);
+    for (let j=0;j<n;j++){
+      const cfg = parseNumOpt_(config.partials[j]);
+      if (cfg != null){
+        segHasDist[j] = true;
+        continue;
+      }
+      for (let i=0;i<(config.swimmers||[]).length;i++){
+        const splitUnits = getSplitUnitsForSwimmer_(i, j);
+        if (splitUnits != null && Number.isFinite(Number(splitUnits))){
+          segHasDist[j] = true;
+          break;
+        }
+      }
+    }
+    segHasDist[n] = Number.isFinite(totalUnits) && totalUnits > 0;
+
+    const includedSegIdxs = segHasDist.map((v, idx) => v ? idx : null).filter(v => v != null);
+    const segIndexToX = new Map();
+    if (!useDistanceX){
+      let seq = 1;
+      includedSegIdxs.forEach(idx => { segIndexToX.set(idx, seq); seq += 1; });
+    }
 
     const tickVals = [];
     const tickLabels = [];
     if (useDistanceX){
-      tickVals.push(0); tickLabels.push('');
-      for (let j=0;j<n;j++){ tickVals.push(Number(config.partials[j])); tickLabels.push(`P${j+1} (${Number(config.partials[j])}${unit})`); }
-      tickVals.push(Number(config.total||0)); tickLabels.push('FINAL');
-    } else {
-      for (let j=0;j<segCount;j++){
-        tickVals.push(j+1);
-        tickLabels.push(j < n ? `P${j+1}` : 'FINAL');
+      tickVals.push(0);
+      tickLabels.push('');
+      for (let j=0;j<n;j++){
+        const acc = parseNumOpt_(config.partials[j]);
+        if (acc != null && segHasDist[j]){
+          tickVals.push(Number(acc));
+          tickLabels.push(`P${j+1} (${Number(acc)}${unit})`);
+        }
       }
+      if (segHasDist[n]){
+        tickVals.push(Number(totalUnits));
+        tickLabels.push('FINAL');
+      }
+    } else {
+      includedSegIdxs.forEach(idx => {
+        tickVals.push(segIndexToX.get(idx));
+        tickLabels.push(idx < n ? `P${idx+1}` : 'FINAL');
+      });
     }
 
     let maxVel = 0;
@@ -6772,16 +6810,22 @@ function escHtml_(v){
         const tAcum = (j < n) ? ((lapTimes[i]||[])[j] ?? null) : (finishTimes[i] ?? null);
         if (tAcum == null) break;
         const tSplit = tAcum - prevTime;
-        let splitUnits = null;
-        if (j < n){
-          splitUnits = getSplitUnitsForSwimmer_(i, j);
-        } else {
-          splitUnits = getFinalSplitUnitsForSwimmer_(i);
-        }
+
+        const splitUnits = (j < n) ? getSplitUnitsForSwimmer_(i, j) : getFinalSplitUnitsForSwimmer_(i);
         const v = mps_(splitUnits, tSplit);
-        const x = useDistanceX ? (j < n ? Number(config.partials[j]) : Number(config.total||0)) : (j+1);
-        points.push({ x, y: (v!=null ? v : null) });
-        if (v!=null && v>maxVel) maxVel = v;
+        if (splitUnits != null && v != null && segHasDist[j]){
+          let x = null;
+          if (useDistanceX){
+            const accUnits = (j < n) ? getAccUnitsForSwimmer_(i, j) : totalUnits;
+            x = (accUnits != null && Number.isFinite(Number(accUnits))) ? Number(accUnits) : null;
+          } else {
+            x = segIndexToX.get(j);
+          }
+          if (x != null){
+            points.push({ x, y: v });
+            if (v > maxVel) maxVel = v;
+          }
+        }
         prevTime = tAcum;
       }
       if (points.length > 1){
@@ -6888,19 +6932,27 @@ function escHtml_(v){
         const metrics = window.getAdvancedMetrics(i, true);
         if (!metrics || !metrics.parciales || !metrics.parciales.length || typeof Chart === 'undefined') return;
 
+        const filtered = metrics.parciales.filter(p => {
+          if (!p) return false;
+          if (p.dist == null || !Number.isFinite(Number(p.dist))) return false;
+          return p.tiempo != null && Number.isFinite(Number(p.tiempo)) && Number(p.tiempo) > 0;
+        });
+        if (!filtered.length) return;
+
         // decidir eje X por nadador: si todas las cum_units existen, usamos distancia; si no, index
         const n = (config.partials||[]).length;
         const segCount = n+1;
         let useDistX = true;
         const xVals = [];
-        for (let j=0;j<metrics.parciales.length;j++){
-          const cum = (j < n) ? getAccUnitsForSwimmer_(i, j) : Number(config.total||0);
+        for (let j=0;j<filtered.length;j++){
+          const segIdx = filtered[j].n - 1;
+          const cum = (segIdx < n) ? getAccUnitsForSwimmer_(i, segIdx) : Number(config.total||0);
           if (cum == null || !Number.isFinite(Number(cum))) { useDistX = false; break; }
           xVals.push(Number(cum));
         }
 
-        const points = metrics.parciales.map((p, idx2) => ({
-          x: useDistX ? xVals[idx2] : (idx2+1),
+        const points = filtered.map((p, idx2) => ({
+          x: useDistX ? xVals[idx2] : (idx2 + 1),
           y: (p.vel!=null ? p.vel : null)
         }));
 
@@ -6915,18 +6967,21 @@ function escHtml_(v){
         const tickVals = [];
         const tickLabels = [];
         if (useDistX){
-          // ticks: 0 + cum distances + total
-          tickVals.push(0); tickLabels.push('');
-          for (let j=0;j<n;j++){
-            const cum = getAccUnitsForSwimmer_(i, j);
-            if (cum==null) break;
+          tickVals.push(0);
+          tickLabels.push('');
+          filtered.forEach((p, idx2) => {
+            const segIdx = p.n - 1;
+            const cum = (segIdx < n) ? getAccUnitsForSwimmer_(i, segIdx) : Number(config.total||0);
+            if (cum == null || !Number.isFinite(Number(cum))) return;
             tickVals.push(Number(cum));
-            tickLabels.push(`P${j+1}`);
-          }
-          tickVals.push(Number(config.total||0));
-          tickLabels.push('FINAL');
+            tickLabels.push(segIdx < n ? `P${segIdx+1}` : 'FINAL');
+          });
         } else {
-          for (let k=0;k<points.length;k++){ tickVals.push(k+1); tickLabels.push(k < (points.length-1) ? `P${k+1}` : 'FINAL'); }
+          for (let k=0;k<points.length;k++){
+            const segIdx = filtered[k].n - 1;
+            tickVals.push(k + 1);
+            tickLabels.push(segIdx < n ? `P${segIdx+1}` : 'FINAL');
+          }
         }
 
         const data = {
